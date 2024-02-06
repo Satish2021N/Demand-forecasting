@@ -1,0 +1,155 @@
+---
+title: "Demo Dashboard"
+author: "rmarkdown.rstudio.com"
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: rows
+    
+---
+
+```{r setup, include=FALSE}
+library(ggplot2)
+library(plotly)
+library(plyr)
+library(flexdashboard)
+library(forecast)
+library(dplyr)
+library(DT)
+
+# Loading dataset
+df = read.csv("F:/Demand Forecasting Thesis/Seasonality/Daily_Report_2020.csv")
+
+# Transformation of Date variable into POSTXLT format and type format
+df$Date = strptime(df$Date, format = "%m/%d/%Y")
+
+# Conversion of above POSTXLT format into date format
+df$Date = as.Date(df$Date)
+
+# Selecting specific columns from the data frame
+df = df %>% select(Date, Adults.Jackets, Easter, Thanksgiving, Christmas, Temperature)
+
+# Regressors --> Easter, Thanksgiving, Christmas, Temperature
+# Changing the colname
+colnames(df)[2] = "y"
+
+
+#Training Set and Test Set Division
+#Since we have regressors as well and we want to include it as well, we will be doing in differnt format
+training_set = df %>% filter(Date < "2020-12-01")
+test_set = df %>% filter(Date >= "2020-12-01")
+
+#Time Series object conversion
+#7 or 365 if daily, if weekly 52, if monthly 12 months, if quarterly 4
+training_y = ts(data=training_set$y,
+                frequency = 7)
+
+#Storing or Isolating the regressors inside of a matrix
+training_set_reg = as.matrix(training_set[,3:6])
+test_set_reg = as.matrix(test_set[,3:6])
+
+#SARIMAX model
+model <- auto.arima(y= training_y,
+                   stepwise = FALSE,
+                   approximation = FALSE,
+                   xreg = training_set_reg)
+model_summary <- summary(model)
+
+#Forecasting 
+predictions_sarimax <- forecast(model, xreg = test_set_reg)
+
+```
+
+SARIMAX
+=======================================================================
+
+Row
+-----------------------------------------------------------------------
+
+### GGPLOT
+
+```{r}
+p <- ggplot(df, aes(x = df$Date, y = y)) +
+  geom_line() +
+  xlab("Time") +
+  ylab("Adult Jackets Demand") +
+  theme(text = element_text(size = 20)) +
+  scale_x_date(date_labels = "%Y %b")    
+
+
+ggplotly(p)
+```
+
+
+
+### Auto Corellation Plot
+
+```{r}
+acf_df <- acf(training_y)
+acf_data <- data.frame(lag = acf_df$lag, acf = acf_df$acf)
+gg_acf_plot <- ggplot(acf_data, aes(x = lag, y = acf)) +
+  geom_bar(stat = "identity", fill = "blue") +
+  labs(title = "Autocorrelation Plot",
+       x = "Lag",
+       y = "Autocorrelation") +
+  theme_minimal()
+
+# Convert ggplot to interactive plot
+ggplotly(gg_acf_plot)
+
+```
+
+Row
+-----------------------------------------------------------------------
+
+### FORECAST
+
+```{r}
+#Plotting
+plot_sarimax <- autoplot(predictions_sarimax)
+
+plot_sarimax
+```
+
+### ACCURACY
+
+```{r}
+accuracy_metrics <- accuracy(predictions_sarimax$mean, test_set$y)
+accuracy_table <- as.data.frame(accuracy_metrics)
+accuracy_table
+```
+
+DATA SET UTILIZED
+=======================================================================
+
+Row
+-----------------------------------------------------------------------
+
+### DATA SET
+
+```{r}
+datatable(df)
+
+```
+
+### TRAINING SET
+
+```{r}
+datatable(training_set)
+
+```
+
+Row
+-----------------------------------------------------------------------
+
+### TEST SET
+
+```{r}
+datatable(test_set)
+
+```
+
+### TEST SET
+
+```{r}
+
+```

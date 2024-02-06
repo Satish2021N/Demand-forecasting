@@ -1,0 +1,204 @@
+---
+title: "Demo Dashboard"
+author: "rmarkdown.rstudio.com"
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: rows
+    
+---
+
+```{r setup, include=FALSE}
+library(ggplot2)
+library(plotly)
+library(plyr)
+library(flexdashboard)
+library(forecast)
+library(dplyr)
+library(DT)
+library(prophet)
+library(forecast)
+
+# Loading dataset
+df = read.csv("F:/Demand Forecasting Thesis/Seasonality/Daily_Report_2020.csv")
+
+# Transformation of Date variable into POSTXLT format and type format
+df$Date = strptime(df$Date, format = "%m/%d/%Y")
+
+# Conversion of above POSTXLT format into date format
+df$Date = as.Date(df$Date)
+
+# Selecting specific columns from the data frame
+df = df %>% select(Date, Adults.Jackets, Easter, Thanksgiving, Christmas, Temperature)
+
+#Changing the name of the columns
+colnames(df)[1]="ds"
+colnames(df)[2]="y"
+
+#Isolate Easter Holiday
+easter_dates = subset(df, df$Easter==1) #function subset, (data_set, condition
+easter_dates = easter_dates$ds
+easter = tibble(holiday='easter', 
+                ds=easter_dates,
+                lower_window=-4,
+                upper_window=+2) #Using function tibble that has 3 things , we need to call exactlty the same holiday, ds, lower and upper windows
+
+#Isolate Thanksgiving holiday
+thanksgiving_dates = subset(df, df$Thanksgiving==1)
+thanksgiving_dates = thanksgiving_dates$ds
+thanksgiving = tibble(holiday="thanksgiving",
+                      ds=thanksgiving_dates,
+                      lower_window=-3,
+                      upper_window=1) #tibble is a function that creates a data frame, and we have to specify what goes inside of it, specify the columns
+
+#Merge Holidays
+holidays = bind_rows(easter, thanksgiving) #Multiple dataframes by row
+
+#Training and Test Set
+training = df %>% 
+  filter(ds < "2020-12-01") %>%
+  select(ds,y, Christmas, Temperature)
+
+test = df %>%
+  filter(ds >= "2020-12-01") %>%
+  select(ds, y, Christmas, Temperature)
+
+#Facebook Prophet Model
+#Since we are dealing with daily data, we have daily data as well so daily = False
+m = prophet(holidays=holidays,
+            yearly.seasonality = TRUE,
+            weekly.seasonality = TRUE,
+            daily.seasonality = FALSE,
+            seasonality.mode = 'multiplicative',
+            seasonality.prior.scale = 10, #Stength of seasonality 
+            holidays.prior.scale = 10, #How holidays events can affect our seasonality curve
+            changepoint.prior.scale = 0.05) #How flexible is our seasonlaity curve
+
+#Adding Regressor
+m = add_regressor(m, "Christmas")
+m = add_regressor(m, "Temperature")
+
+#Fit the model
+m = fit.prophet(m, training)
+
+#Regressor Coefficients How much the regressors affect our forecast
+regressor_coefficients(m)
+#Since we are using regressor_mode as multiplicative which is by default we read the coefficients in percentage, we need to multiply the coeffcient by 100
+#Christmas doesnt have much impact on jackets whereas temperature plays vital role in jackets demand, as temperature decreases we have demand for jackets also decrease.
+
+#Creating future dataframe which consists of future value and future values for regressors
+future = make_future_dataframe(m,
+                               periods = nrow(test)) #Since we have daily data we dont need to take care about frequency
+
+future[,2:3] = df %>% select(Christmas, Temperature)
+
+#Forecasting
+forecast = predict(m, future)
+#yhat --> actual prediction of the forecast
+
+#Select specific values from the forecast dataset
+forecast %>%
+  select(ds, easter) %>%
+  filter(abs(easter) >0) %>% #Selecting absolute value of easter, converts the negative values into positive and only shows the value other than zero
+  filter(ds > "2020-01-01")
+print(easter_dates)
+
+forecast %>%
+  select(ds, thanksgiving) %>%
+  filter(abs(thanksgiving) >0) %>%
+  filter(ds > "2020-01-01")
+print(thanksgiving_dates)
+
+predictions = tail(forecast$yhat, nrow(test))
+
+```
+
+FACEBOOK PROPHET
+=======================================================================
+
+Row
+-----------------------------------------------------------------------
+
+### GGPLOT
+
+```{r}
+p <- ggplot(df, aes(x=ds, y=y))+
+  geom_line()+
+  xlab("Time")+
+  ylab("Adult Jackets Demand")+
+  theme(text = element_text(size=20))+
+  scale_x_date(date_labels = "%Y %b")
+ggplotly(p)
+```
+
+
+
+### GENERAL FORECAST
+
+```{r}
+# Create the base R plot
+base_plot <- plot(m, forecast)
+
+# Convert ggplot to interactive plot
+interactive_plot <- ggplotly(base_plot)
+interactive_plot
+```
+
+Row
+-----------------------------------------------------------------------
+
+### TIME SERIES COMPONENT ANALYSIS
+
+```{r}
+#Plotting
+components_plot <- prophet_plot_components(m, forecast)
+interactive_components_plots <- lapply(components_plot, ggplotly)
+interactive_components_row <- subplot(interactive_components_plots, nrows = length(components_plot), shareX = TRUE, shareY = TRUE)
+interactive_components_row
+```
+
+### FORECAST
+
+```{r}
+base_plot <- plot(m, forecast) + add_changepoints_to_plot(m)
+interactive_plot <- ggplotly(base_plot)
+interactive_plot
+```
+
+DATA SET UTILIZED
+=======================================================================
+
+Row
+-----------------------------------------------------------------------
+
+### DATA SET
+
+```{r}
+datatable(df)
+
+```
+
+### TRAINING SET
+
+```{r}
+datatable(training)
+
+```
+
+Row
+-----------------------------------------------------------------------
+
+### TEST SET
+
+```{r}
+datatable(test)
+
+```
+
+### ACCURACY
+
+```{r}
+accuracy_metrices <- accuracy(predictions, test$y)
+accuracy_table <- as.data.frame(accuracy_metrices)
+accuracy_table
+
+```
